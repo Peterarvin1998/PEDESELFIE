@@ -1,0 +1,73 @@
+Det ser ud til, at du ønsker en frontend, der matcher det design, vi talte om tidligere. Her er en opdateret version af `index.html` med en mere brugervenlig og centreret styling, så du kan lægge den direkte i GitHub og bruge med Netlify:
+
+```html
+<!DOCTYPE html>
+<html lang="da">
+<head>
+  <meta charset="UTF-8">
+  <title>Selfie App</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      background-color: #f4f4f4;
+      margin: 0;
+      padding: 20px;
+    }
+    h1 {
+      color: #333;
+    }
+    select, button {
+      padding: 10px;
+      font-size: 16px;
+      margin: 10px;
+    }
+    video, canvas {
+      margin-top: 20px;
+      border: 2px solid #ccc;
+      border-radius: 8px;
+      background-color: #000;
+    }
+  </style>
+</head>
+<body>
+  <h1>📸 Selfie App</h1>
+  <label for="timer">⏳ Vælg timer:</label>
+  <select id="timer">
+    <option value="3">3 sekunder</option>
+    <option value="5">5 sekunder</option>
+    <option value="10">10 sekunder</option>
+  </select>
+  <button onclick="takeSelfie()">Tag Selfie</button>
+  <br>
+  <video id="video" width="400" autoplay></video>
+  <canvas id="canvas" width="400" height="300" style="display:none;"></canvas>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const context = canvas.getContext('2d');
+
+    navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+      video.srcObject = stream;
+    });
+
+    function takeSelfie() {
+      const delay = parseInt(document.getElementById('timer').value) * 1000;
+      setTimeout(() => {
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imgData = canvas.toDataURL('image/png');
+        uploadToDrive(imgData);
+      }, delay);
+    }
+
+    function uploadToDrive(imgData) {
+      // Google Drive API integration kommer her
+      alert("Billede taget! Upload til Google Drive skal implementeres.");
+    }
+  </script>
+</body>
+</html>
+```
+
+Denne version vil se mere pæn og centreret ud, når du åbner den i browseren. Læg den som `index.html` i dit GitHub-repo, så Netlify kan hoste den.
