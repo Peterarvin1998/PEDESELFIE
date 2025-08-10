@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Selfie App – Web → Google Drive (Auto-upload)</title>
+  <style>
+    :root{--gap:12px;--radius:16px;--shadow:0 6px 20px rgba(0,0,0,.08)}
+    *{box-sizing:border-box;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+    body{margin:0;background:#0f172a;color:#e5e7eb}
+    header{padding:20px 24px;background:#111827;border-bottom:1px solid #1f2937}
+    header h1{margin:0;font-size:20px}
+    main{display:grid;grid-template-columns:360px 1fr;gap:var(--gap);padding:var(--gap)}
+    @media (max-width: 1100px){main{grid-template-columns:1fr}}
+    .card{background:#111827;border:1px solid #1f2937;border-radius:var(--radius);box-shadow:var(--shadow)}
+    .card h2{font-size:16px;margin:0 0 10px 0}
+    .pane{padding:16px}
+    .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    label{font-size:14px;color:#cbd5e1}
+    select,button{border-radius:10px;border:1px solid #334155;background:#0b1220;color:#e5e7eb;padding:10px 12px}
+    button{cursor:pointer}
+    button.primary{background:#2563eb;border-color:#1d4ed8}
+
+    #videoWrapper{position:relative;overflow:hidden;border-radius:16px}
+    video{width:100%;height:auto;background:#000;border-radius:16px}
+    canvas{display:none}
+    #countdown{position:absolute;inset:0;display:grid;place-items:center;font-size:80px;font-weight:700;color:white;text-shadow:0 4px 18px rgba(0,0,0,.6);pointer-events:none}
+
+    #gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:var(--gap);padding:var(--gap)}
+    .thumb{position:relative;border-radius:14px;overflow:hidden;border:1px solid #1f2937;background:#0b1220}
+    .thumb img{display:block;width:100%;height:auto}
+    .thumb .actions{display:flex;gap:8px;padding:10px;border-top:1px solid #1f2937}
+    .muted{opacity:.7}
+    .linkbox{padding:12px;border-radius:12px;background:#0b1220;border:1px solid #1f2937;word-break:break-all}
+    .small{font-size:12px;color:#94a3b8}
+    .success{color:#22c55e}
+    .error{color:#ef4444}
+    .warn{color:#eab308}
+    .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Selfie App – Test (Browser → Google Drive, auto-upload)</h1>
+  </header>
+  <main>
+    <section class="card">
+      <div class="pane">
+        <h2>Indstillinger</h2>
+        <div class="row" style="margin-top:6px">
+          <label for="timerSelect">Nedtælling</label>
+          <select id="timerSelect">
+            <option value="3">3 sek</option>
+            <option value="5">5 sek</option>
+            <option value="10">10 sek</option>
+          </select>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button id="startBtn" class="primary">Start kamera</button>
+          <button id="shutterBtn">Tag billede</button>
+        </div>
+        <div class="row" style="margin-top:14px">
+          <button id="authBtn" class="primary">Log ind til Google Drive</button>
+        </div>
+        <p class="small muted" style="margin-top:10px">Tip: Kør via https eller localhost (fx “Live Server” i VS Code eller <code>python -m http.server</code>), så kameraet virker.</p>
+      </div>
+
+      <div class="pane" id="videoWrapper">
+        <div id="countdown" aria-live="polite"></div>
+        <video id="video" playsinline autoplay muted></video>
+        <canvas id="canvas"></canvas>
+      </div>
+
+      <div class="pane">
+        <h2>Uploadmappe</h2>
+        <div id="folderInfo" class="linkbox">
+          Uploads går direkte til:
+          <a href="https://drive.google.com/drive/folders/1S_1f7ehTh-_Bsmta4WEz7A-wFhOgaR4X" target="_blank">https://drive.google.com/drive/folders/1S_1f7ehTh-_Bsmta4WEz7A-wFhOgaR4X</a>
+        </div>
+        <div id="status" class="small" style="margin-top:8px"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="pane"><h2>Billedgalleri</h2></div>
+      <div id="gallery"></div>
+    </section>
+
+    <section class="card">
+      <div class="pane">
+        <h2>Diagnostik & Tests</h2>
+        <div class="small muted" id="envInfo"></div>
+        <div class="row" style="margin-top:10px">
+          <button id="runTestsBtn">Kør indbyggede tests</button>
+        </div>
+      </div>
+      <div class="pane">
+        <div id="testResults" class="mono small"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // ===============================
+    // KONFIGURATION (REDIGÉR HER)
+    // ===============================
+    // 1) Indsæt din Google OAuth 2.0 Web Client ID her (fra Google Cloud Console)
+    // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    const GOOGLE_CLIENT_ID = "PASTE_YOUR_GOOGLE_OAUTH_WEB_CLIENT_ID_HERE"; // <<< SKIFT HER
+    // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
+    // 2) Angiv ID'et på den Drive-mappe hvor billederne skal gemmes
+    // (ID'et i URL'en: https://drive.google.com/drive/folders/THIS_IS_THE_ID)
+    // For din mappe er ID'et: 1S_1f7ehTh-_Bsmta4WEz7A-wFhOgaR4X
+    // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    const DRIVE_PARENT_FOLDER_ID = "1S_1f7ehTh-_Bsmta4WEz7A-wFhOgaR4X"; // <<< SKIFT HER VED BEHOV
+    // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
+    // 3) (Valgfrit) Billedformat
+    const IMAGE_MIME = "image/jpeg";
+    const IMAGE_QUALITY = 0.92; // 0-1 for JPEG/WebP
+
+    // ===============================
+    // GLOBAL ERROR HANDLERS
+    // - Ignorér MetaMask-fejl (appen bruger IKKE MetaMask)
+    // ===============================
+    window.addEventListener('error', (e) => {
+      const msg = String(e.message || e.error || '');
+      if (msg.toLowerCase().includes('metamask')) {
+        e.preventDefault?.();
+        setStatus('Ignoreret MetaMask-fejl (ikke relevant).', true);
+        return;
+      }
+      if (msg) setStatus('Fejl: ' + msg, true);
+    });
+    window.addEventListener('unhandledrejection', (e) => {
+      const msg = String((e.reason && (e.reason.message || e.reason.toString())) || '');
+      if (msg.toLowerCase().includes('metamask')) {
+        e.preventDefault?.();
+        setStatus('Ignoreret MetaMask-fejl (ikke relevant).', true);
+        return;
+      }
+      if (msg) setStatus('Fejl: ' + msg, true);
+    });
+
+    // ===============================
+    // STATE
+    // ===============================
+    let stream = null;
+    let accessToken = null;
+    let hasAuthedOnce = false;
+
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const countdownEl = document.getElementById('countdown');
+    const gallery = document.getElementById('gallery');
+    const statusEl = document.getElementById('status');
+
+    const timerSelect = document.getElementById('timerSelect');
+    const startBtn = document.getElementById('startBtn');
+    const shutterBtn = document.getElementById('shutterBtn');
+    const authBtn = document.getElementById('authBtn');
+
+    const envInfo = document.getElementById('envInfo');
+    const runTestsBtn = document.getElementById('runTestsBtn');
+    const testResults = document.getElementById('testResults');
+
+    // ===============================
+    // ENV DIAGNOSTICS
+    // ===============================
+    const isSecure = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+    const hasCameraApi = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+    envInfo.innerHTML = `
+      Sikker kontekst: <strong>${isSecure ? 'ja' : 'nej'}</strong> ·
+      Kamera-API: <strong>${hasCameraApi ? 'ja' : 'nej'}</strong> ·
+      Google Client ID sat: <strong>${GOOGLE_CLIENT_ID.includes('PASTE_') ? 'nej' : 'ja'}</strong>
+    `;
+    if (!isSecure) setStatus('Advarsel: getUserMedia kræver https eller localhost.', true);
+
+    // ===============================
+    // CAMERA
+    // ===============================
+    startBtn.addEventListener('click', async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+        video.srcObject = stream;
+        setStatus('Kamera startet.');
+      } catch (err) {
+        setStatus('Kunne ikke starte kamera: ' + err.message, true);
+      }
+    });
+
+    shutterBtn.addEventListener('click', async () => {
+      if (!stream) return setStatus('Start kameraet først.', true);
+      if (!accessToken) return setStatus('Log ind til Google Drive først.', true);
+      const seconds = parseInt(timerSelect.value, 10) || 3;
+      await runCountdown(seconds);
+      const blob = await captureFrame();
+      addThumb(blob);
+      await uploadBlobToDrive(blob); // ALTID auto-upload direkte til den angivne mappe
+    });
+
+    function runCountdown(seconds){
+      return new Promise(resolve => {
+        let s = seconds;
+        countdownEl.textContent = s;
+        const iv = setInterval(() => {
+          s -= 1;
+          if (s <= 0){
+            clearInterval(iv);
+            countdownEl.textContent = '';
+            resolve();
+          } else {
+            countdownEl.textContent = s;
+          }
+        }, 1000);
+      });
+    }
+
+    async function captureFrame(){
+      const track = stream.getVideoTracks()[0];
+      const settings = track.getSettings();
+      const w = settings.width || 1280;
+      const h = settings.height || 720;
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, w, h);
+      return await new Promise(res => canvas.toBlob(res, IMAGE_MIME, IMAGE_QUALITY));
+    }
+
+    function addThumb(blob){
+      const url = URL.createObjectURL(blob);
+      const el = document.createElement('div');
+      el.className = 'thumb';
+      el.innerHTML = `
+        <img src="${url}" alt="selfie" />
+        <div class="actions">
+          <a download="selfie-${Date.now()}.jpg" href="${url}"><button>Download</button></a>
+        </div>
+      `;
+      gallery.prepend(el);
+    }
+
+    // ===============================
+    // GOOGLE DRIVE (OAuth + API)
+    // ===============================
+    const OAUTH_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+    let tokenClient = null;
+
+    loadGis();
+    function loadGis(){
+      const sc = document.createElement('script');
+      sc.src = 'https://accounts.google.com/gsi/client';
+      sc.onload = () => {
+        tokenClient = google.accounts.oauth2.initTokenClient({
+          client_id: GOOGLE_CLIENT_ID,
+          scope: OAUTH_SCOPE,
+          callback: (resp) => {
+            if (resp && resp.access_token){
+              accessToken = resp.access_token;
+              hasAuthedOnce = true;
+              setStatus('Login OK. Klar til at uploade.');
+            } else {
+              setStatus('Login mislykkedes.', true);
+            }
+          }
+        });
+      };
+      document.head.appendChild(sc);
+    }
+
+    authBtn.addEventListener('click', () => {
+      if (!tokenClient) return setStatus('Loader Google login… prøv igen om et sekund.', true);
+      try {
+        tokenClient.requestAccessToken({ prompt: hasAuthedOnce ? '' : 'consent' });
+      } catch (e) {
+        setStatus('Login-fejl: ' + (e.message || e), true);
+      }
+    });
+
+    function buildMultipartBody(meta, base64, mime, boundary){
+      const delimiter = `\r\n--${boundary}\r\n`;
+      const closeDelim = `\r\n--${boundary}--`;
+      return (
+        delimiter +
+        'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+        JSON.stringify(meta) + '\r\n' +
+        delimiter +
+        `Content-Type: ${mime}\r\n` +
+        'Content-Transfer-Encoding: base64\r\n\r\n' +
+        base64 + closeDelim
+      );
+    }
+
+    async function uploadBlobToDrive(blob){
+      const filename = `selfie-${Date.now()}.jpg`;
+      const meta = { name: filename, parents: [DRIVE_PARENT_FOLDER_ID] };
+      const boundary = '-------314159265358979323846';
+
+      const reader = new FileReader();
+      const toBase64 = (blob) => new Promise((res, rej)=>{
+        reader.onerror = rej;
+        reader.onload = () => res(reader.result.split(',')[1]);
+        reader.readAsDataURL(blob);
+      });
+      const b64 = await toBase64(blob);
+
+      const body = buildMultipartBody(meta, b64, IMAGE_MIME, boundary);
+
+      const resp = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': `multipart/related; boundary="${boundary}"`
+        },
+        body
+      });
+
+      if (!resp.ok){
+        const t = await resp.text();
+        setStatus('Upload fejlede: ' + t, true);
+        return;
+      }
+
+      setStatus(`Uploadet: ${filename}`, false, true);
+    }
+
+    // ===============================
+    // TEST RUNNER (indbyggede tests)
+    // ===============================
+    const tests = [];
+    function test(name, fn){ tests.push({ name, fn }); }
+    function logResult(level, name, msg=''){
+      const color = level === 'PASS' ? 'success' : (level === 'WARN' ? 'warn' : 'error');
+      const line = `<div class="${color}"><strong>[${level}]</strong> ${name}${msg ? ' – ' + msg : ''}</div>`;
+      testResults.insertAdjacentHTML('beforeend', line);
+    }
+
+    // Hårde tests (må ikke brydes)
+    test('Timer options er 3/5/10', () => {
+      const values = Array.from(timerSelect.querySelectorAll('option')).map(o=>o.value);
+      const expected = ['3','5','10'];
+      if (values.length !== expected.length || !expected.every(v=>values.includes(v))) throw new Error('Forkerte timer options');
+    });
+
+    test('Secure context anbefaling', () => {
+      if (!isSecure) throw new Error('Ikke sikker kontekst (https/localhost)');
+    });
+
+    test('Kamera-API findes', () => {
+      if (!hasCameraApi) throw new Error('navigator.mediaDevices.getUserMedia mangler');
+    });
+
+    test('DRIVE_PARENT_FOLDER_ID matcher ønsket mappe', () => {
+      if (DRIVE_PARENT_FOLDER_ID !== '1S_1f7ehTh-_Bsmta4WEz7A-wFhOgaR4X') throw new Error('Forkert mappe-ID – ret i koden.');
+    });
+
+    test('Ingen ethereum/metamask-afhængighed', () => {
+      if (typeof window.ethereum !== 'undefined'){
+        const snap = Object.keys(window.ethereum || {}).join(',');
+        // Appen må ikke kalde ethereum.request ved init
+        if (typeof window.ethereum.request === 'function'){
+          const orig = window.ethereum.request; let called = false;
+          window.ethereum.request = (...args) => { called = true; throw new Error('TEST_GUARD_ETHEREUM_REQUEST_CALLED'); };
+          window.ethereum.request = orig;
+          if (called) throw new Error('ethereum.request blev kaldt under init');
+        }
+      }
+    });
+
+    test('Multipart body indeholder både meta og base64 og boundary', () => {
+      const boundary = 'BOUND';
+      const meta = { name: 'x.jpg', parents: ['123'] };
+      const body = buildMultipartBody(meta, 'YWJj', 'image/jpeg', boundary);
+      if (!body.includes('--BOUND') || !body.includes('application/json') || !body.includes('image/jpeg') || !body.includes('YWJj')){
+        throw new Error('Forkert multipart body');
+      }
+    });
+
+    // Bløde tests (advarsler)
+    function softTest(name, fn){
+      try { fn(); logResult('PASS', name); }
+      catch (e){ logResult('WARN', name, e.message || String(e)); }
+    }
+
+    runTestsBtn.addEventListener('click', () => runAllTests());
+    function runAllTests(){
+      testResults.innerHTML = '';
+      for (const t of tests){
+        try { t.fn(); logResult('PASS', t.name); }
+        catch (e){ logResult('FAIL', t.name, e.message || String(e)); }
+      }
+      softTest('GOOGLE_CLIENT_ID er sat (konfiguration)', () => {
+        if (GOOGLE_CLIENT_ID.includes('PASTE_')) throw new Error('Indsæt dit OAuth 2.0 Web Client ID i koden.');
+      });
+      softTest('DRIVE_PARENT_FOLDER_ID ligner et Drive-ID', () => {
+        if (!/^[a-zA-Z0-9_-]{10,}$/.test(DRIVE_PARENT_FOLDER_ID)) throw new Error('Drive mappe-ID ser forkert ud.');
+      });
+    }
+
+    // Kør tests ved load for hurtig feedback
+    setTimeout(runAllTests, 0);
+
+    // ===============================
+    // UI HELPERS
+    // ===============================
+    function setStatus(msg, isError=false, isSuccess=false){
+      statusEl.textContent = msg;
+      statusEl.className = 'small ' + (isError ? 'error' : (isSuccess ? 'success' : ''));
+      console[isError ? 'error' : (isSuccess ? 'log' : 'info')](msg);
+    }
+  </script>
+</body>
+</html>
